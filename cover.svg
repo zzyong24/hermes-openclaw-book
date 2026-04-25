@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1100">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="100%" style="stop-color:#1e293b"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#f59e0b"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="1100" fill="url(#bg)"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="800" height="6" fill="url(#lineGrad)"/>
+
+  <!-- Decorative circles -->
+  <circle cx="120" cy="150" r="280" fill="none" stroke="#6366f1" stroke-width="1" opacity="0.15"/>
+  <circle cx="680" cy="950" r="320" fill="none" stroke="#f59e0b" stroke-width="1" opacity="0.15"/>
+  <circle cx="400" cy="550" r="200" fill="none" stroke="#ffffff" stroke-width="0.5" opacity="0.08"/>
+
+  <!-- Center divider line -->
+  <line x1="400" y1="380" x2="400" y2="720" stroke="url(#lineGrad)" stroke-width="2" stroke-dasharray="8,6"/>
+
+  <!-- Left side: Hermes -->
+  <text x="200" y="440" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="700" fill="#818cf8" text-anchor="middle" filter="url(#glow)">Hermes</text>
+  <text x="200" y="480" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#94a3b8" text-anchor="middle" letter-spacing="8">智能体框架</text>
+
+  <!-- Right side: OpenClaw -->
+  <text x="600" y="440" font-family="system-ui, -apple-system, sans-serif" font-size="42" font-weight="700" fill="#fbbf24" text-anchor="middle" filter="url(#glow)">OpenClaw</text>
+  <text x="600" y="480" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#94a3b8" text-anchor="middle" letter-spacing="8">智能体框架</text>
+
+  <!-- VS -->
+  <circle cx="400" cy="455" r="28" fill="#0f172a" stroke="url(#lineGrad)" stroke-width="2"/>
+  <text x="400" y="463" font-family="system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#ffffff" text-anchor="middle">VS</text>
+
+  <!-- Title -->
+  <text x="400" y="180" font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="800" fill="#ffffff" text-anchor="middle" filter="url(#glow)">AI 智能体</text>
+  <text x="400" y="240" font-family="system-ui, -apple-system, sans-serif" font-size="56" font-weight="800" fill="#ffffff" text-anchor="middle" filter="url(#glow)">架构实战</text>
+
+  <!-- Subtitle -->
+  <text x="400" y="300" font-family="system-ui, -apple-system, sans-serif" font-size="22" fill="#94a3b8" text-anchor="middle">双框架深度对比与选型指南</text>
+
+  <!-- Bottom info -->
+  <line x1="150" y1="800" x2="650" y2="800" stroke="#334155" stroke-width="1"/>
+  <text x="400" y="850" font-family="system-ui, -apple-system, sans-serif" font-size="16" fill="#64748b" text-anchor="middle">Skills · SubAgent · Memory</text>
+  <text x="400" y="885" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#475569" text-anchor="middle">源码分析 | 架构对比 | 实战踩坑</text>
+
+  <!-- Author -->
+  <text x="400" y="950" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#475569" text-anchor="middle">月明 著</text>
+
+  <!-- Tags -->
+  <rect x="250" y="980" width="100" height="28" rx="14" fill="#1e293b" stroke="#334155"/>
+  <text x="300" y="999" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">Agent</text>
+  <rect x="365" y="980" width="100" height="28" rx="14" fill="#1e293b" stroke="#334155"/>
+  <text x="415" y="999" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">OpenClaw</text>
+  <rect x="480" y="980" width="100" height="28" rx="14" fill="#1e293b" stroke="#334155"/>
+  <text x="530" y="999" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">Hermes</text>
+
+  <!-- Bottom accent line -->
+  <rect x="0" y="1094" width="800" height="6" fill="url(#lineGrad)"/>
+</svg>

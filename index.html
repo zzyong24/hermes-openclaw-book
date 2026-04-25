@@ -7,13 +7,17 @@
   <meta name="description" content="Hermes & OpenClaw 实战 - 智能体架构对比与实践">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
   <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <style>
+    .mermaid { background: #1e293b; border-radius: 8px; padding: 16px; }
+    .mermaid svg { max-width: 100%; }
+  </style>
 </head>
 <body>
   <div id="app"></div>
   <script>
     window.$docsify = {
       name: 'Hermes & OpenClaw 实战',
-      repo: 'https://github.com/moonlitclear/hermes-openclaw-book',
+      repo: 'https://github.com/zzyong24/hermes-openclaw-book',
       loadSidebar: true,
       subMaxLevel: 3,
       auto2top: true,
@@ -23,11 +27,27 @@
         placeholder: '搜索',
         noData: '找不到结果',
         depth: 3
+      },
+      markdown: {
+        renderer: {
+          code: function(code, lang) {
+            if (lang === 'mermaid') {
+              return '<div class="mermaid">' + code + '</div>';
+            }
+            return this.origin.code.apply(this, arguments);
+          }
+        }
       }
     }
   </script>
   <!-- Docsify v4 -->
   <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
   <script src="//cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
+  <!-- Mermaid -->
+  <script src="//cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({ startOnLoad: false, theme: 'dark', themeVariables: { darkMode: true } });
+    document.addEventListener('DOMContentLoaded', function() { mermaid.run(); });
+  </script>
 </body>
 </html>

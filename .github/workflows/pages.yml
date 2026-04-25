@@ -30,7 +30,7 @@ jobs:
         run: npm install -g docsify-cli
       
       - name: Build docsify
-        run: docsify build .
+        run: docsify build
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

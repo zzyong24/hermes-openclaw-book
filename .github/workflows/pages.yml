@@ -20,18 +20,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      
-      - name: Install docsify-cli
-        run: npm install -g docsify-cli
-      
+
+      - name: Install docsify
+        run: npm install docsify
+
       - name: Build docsify
-        run: docsify build
-      
+        run: npx docsify build
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

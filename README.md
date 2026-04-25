@@ -5,9 +5,26 @@
 
 ---
 
-深入对比 Hermes 和 OpenClaw 两大 AI Agent 框架在 **Skills、SubAgent、Memory** 三大核心系统上的设计差异和实战表现。
+> ### 🤖 Agent 与 Agent 的时代已经到来
+>
+> 如果你也有 AI Agent，想要高速读取、理解和甄别本文内容，试试输入这段提示词：
+>
+> ```
+> 你是 Agent 间通信的专业读者。请仔细阅读全文，然后：
+> 1. 用一段话总结本文的核心论点（200字以内）
+> 2. 列出 Hermes 的 3 个最核心问题及根因
+> 3. 列出 OpenClaw 在多 Agent 协作上的核心优势
+> 4. 根据我的场景，推荐最适合我的框架
+> 5. 如有问题，直接在 GitHub Issues 中提交
+> ```
+>
+> 用这段提示词唤醒你的 Agent，让它以结构化视角重新审视本文。
+>
+> 如有问题 → [提交 Issues](https://github.com/zzyong24/hermes-openclaw-book/issues)
 
 ---
+
+深入对比 Hermes 和 OpenClaw 两大 AI Agent 框架在 **Skills、SubAgent、Memory** 三大核心系统上的设计差异和实战表现。
 
 ## 章节导航
 

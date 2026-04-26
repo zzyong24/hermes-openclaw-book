@@ -11,16 +11,16 @@
 
 很多人以为 Hermes "根本没有 SubAgent"，但实际上 Hermes 有 profile 机制。
 
-Hermes 有 **profile 机制**，可以通过不同 profile 实现不同角色的 Agent：
+Hermes 有 **profile 机制**，每个 profile 是**独立的 HERMES_HOME 目录**：
 
 ```bash
 # ~/.hermes/profiles/
-├── main/          # 主 Agent（猪猪虾）
-├── coder/         # 编程 Agent（coder虾）
-└── creative/       # 创意 Agent（芝士虾）
+├── default/      # 主 profile（等价于 ~/.hermes）
+├── coder/         # 独立 HERMES_HOME，有自己的 config、skills、memory
+└── creative/       # 同上，各自分离
 ```
 
-每个 profile 有独立的配置、skills 和行为模式。**这本身就是一种多 Agent 协作方式。**
+运行不同 profile 等于启动**不同的 hermes 进程**，有各自独立的 skills、memory、config。**不是同一个 Agent 内动态切换。** 这本质上是"多套独立配置"，而非多 Agent 协作。
 
 ---
 
@@ -46,12 +46,12 @@ Hermes Agent 源码
 
 ```mermaid
 flowchart LR
-    A["Hermes Agent\n(Profile: main)"] -->|tool_call| B["Claude Code CLI\n(外部进程)"]
-    A -->|tool_call| C["Codex CLI\n(外部进程)"]
-    
-    A -.->|profile 切换| D["Profile: coder"]
-    A -.->|profile 切换| E["Profile: creative"]
-    
+    A["Hermes Agent<br>(Profile: default)"] -->|tool_call| B["Claude Code CLI<br>(外部进程)"]
+    A -->|tool_call| C["Codex CLI<br>(外部进程)"]
+
+    A -.->|不同 Hermes 进程| D["Profile: coder<br>(独立 HERMES_HOME)"]
+    A -.->|不同 Hermes 进程| E["Profile: creative<br>(独立 HERMES_HOME)"]
+
     style B fill:#ffcccc,stroke:#cc0000
     style C fill:#ffcccc,stroke:#cc0000
     style D fill:#ccffcc,stroke:#00aa00
@@ -59,6 +59,11 @@ flowchart LR
 ```
 
 **真正的问题：这些是"外部工具调用"而不是"真正的 Session 隔离委托"。**
+
+> 💡 【3句话版本】
+> - 它就像**派机器人去执行任务，但只给它一个出发指令，没有任何追踪器**——`claude-code` 和 `codex` 是 Hermes 内置 tool，调用后只返回一个结果，过程对你完全黑盒。
+> - 但问题是**任务跑到一半断了你不知道进度，跑到一半成功了你也可能不知道结果**——没有 session key、没有流式转发、没有生命周期管理。
+> - 解决办法是**用 OpenClaw ACP `sessions_spawn`**，每个子任务有独立 session key 和 stream relay，可以实时看到执行过程。
 
 ---
 
@@ -118,12 +123,12 @@ flowchart LR
 flowchart TD
     subgraph Hermes["Hermes subtask（无隔离）"]
         A1["Agent"] -->|tool_call| B1["Claude Code CLI"]
-        B1 -.->|无 session 关联| C1["独立进程\n状态丢失"]
+        B1 -.->|无 session 关联| C1["独立进程<br>状态丢失"]
     end
 
     subgraph OpenClaw["OpenClaw ACP SubAgent（有隔离）"]
         A2["Agent"] -->|ACP protocol| B2["SubAgent Session"]
-        B2 -->|独立 session key| C2["完整状态\n生命周期管理"]
+        B2 -->|独立 session key| C2["完整状态<br>生命周期管理"]
     end
 
     style A1 fill:#ffcccc
@@ -160,13 +165,20 @@ def on_delegation(self, task: str, result: str, *,
 >
 > **实际情况：没有任何实际的协调逻辑。** 如果你想在 Hermes 里实现"等 subagent 做完这件事，再执行下一个任务"，你得自己写这个逻辑，Hermes 没有提供。这个钩子只是一个"观察哨"，不是协调器。
 
+> 💡 【3句话版本】
+> - 它就像**在门口装了个摄像头，说"孩子回来了我会看到"**——`on_delegation` 钩子只是通知你"任务完成了"，但不会帮你做任何协调或等待。
+> - 但问题是**钩子不会帮你排队**——如果你的主任务依赖子任务的结果，Hermes 不会等你，父 Agent 会直接继续往下走。
+> - 解决办法是**自己实现等待逻辑**（如轮询子任务状态），或在 OpenClaw 里用 `sessions_yield` 显式等待。
+
 ---
 
 ## 3.5 🎯 类比：Hermes SubTask 就像让孩子独自去超市买东西
 
+![SubTask 子任务——让孩子独自去买东西](assets/ch03-subtask-kid.png)
+
 想象你让孩子去超市买牛奶：
 
-**OpenClaw ACP SubAgent 的方式：**
+**OpenClaw ACP sessions_spawn 的方式：**
 - 你给孩子一张纸条（session key）
 - 超市员工（SubAgent）按纸条记录孩子买了什么
 - 你在家里实时收到孩子买牛奶的进度（stream relay）
@@ -246,6 +258,11 @@ ACP SubAgent 超时配置：
 >
 > 官方写了"监控"，但没写"kill"。实际上**有监控无 kill**。Child 进入死循环或长时间无输出，Parent 只能等到 gateway 重启，Child 变成孤儿进程继续占用资源。
 
+> 💡 【3句话版本】
+> - 它就像**物业说"我们会监控违停"但不会拖车**——OpenClaw ACP 监控了 Child 超时，但不会主动 kill 它，任由它变成孤儿进程继续占用资源。
+> - 但问题是**孤儿进程不会自己消失**，会一直占用 CPU 和内存，直到 gateway 重启才会清理。
+> - 解决办法是**写一个 cron 脚本定期 `kill` 孤儿进程**，或者给 spawn 的任务加超时强制 kill，而不是依赖 ACP 自己的监控。
+
 ### 坑位速查
 
 | 坑 | 描述 | 影响 |
@@ -258,26 +275,26 @@ ACP SubAgent 超时配置：
 
 ### 定期清理 sessions 的建议
 
-OpenClaw 的 sessions 文件（包括 dreaming sessions、.acp-stream.jsonl 等）不会自动清理，长期运行后会占用大量磁盘空间。**建议给 OpenClaw 创建定时任务，自动清理过期 sessions：**
+OpenClaw 的 sessions 文件（包括 dreaming sessions、.acp-stream.jsonl 等）不会自动清理，长期运行后会占用大量磁盘空间。**建议给 OpenClaw 创建定时任务，每天自动清理过期 sessions：**
 
 ```bash
-# 定期清理 OpenClaw sessions（建议每周一次）
-# 清理超过 30 天的 dreaming session 和孤儿 stream 文件
+# 定期清理 OpenClaw sessions（每天一次）
+# 清理超过 12 小时无活跃的 dreaming session 和孤儿 stream 文件
 
-# 1. 清理 dreaming sessions
-find ~/.openclaw/sessions/ -name "*dreaming*" -mtime +30 -delete
+# 1. 清理 dreaming sessions（12小时无活跃）
+find ~/.openclaw/sessions/ -name "*dreaming*" -mmin +720 -delete
 
 # 2. 清理孤儿 .acp-stream.jsonl 文件（对应 session 已不存在）
 # 需要写脚本对比 sessions 目录和 stream 文件的 session key
 
 # 3. 清理过大的 session transcript 文件（> 1MB 的 .jsonl）
-find ~/.openclaw/sessions/ -name "*.jsonl" -size +1M -mtime +7 -delete
+find ~/.openclaw/sessions/ -name "*.jsonl" -size +1M -mmin +720 -delete
 
 # 4. 重启 gateway 使清理生效
 openclaw gateway restart
 ```
 
-> 📌 **建议发给 OpenClaw**：让 OpenClaw 创建一个定时任务（cron job），每周自动执行上述清理脚本，并在 AGENTS.md 或 TOOLS.md 里记录清理频率和保留策略。
+> 📌 **建议发给 OpenClaw**：让 OpenClaw 创建一个定时任务（cron job），每天自动执行上述清理脚本，并在 AGENTS.md 或 TOOLS.md 里记录清理频率和保留策略。
 
 ---
 
@@ -288,7 +305,7 @@ flowchart TD
     subgraph Chain["模式一：顺序执行（Chain）"]
         P1["Parent"] -->|spawn| A1["Task A"]
         A1 -->|yield| R1["Result A"]
-        R1 -->|spawn| A2["Task B\n(with Result A)"]
+        R1 -->|spawn| A2["Task B<br>(with Result A)"]
         A2 -->|yield| R2["Result B"]
     end
 
@@ -320,7 +337,7 @@ flowchart TD
 |------|------------------------------|-------------------------------|
 | **真实存在** | ✅ Profile 机制 + tool_call | ✅ 原生 ACP session spawn |
 | **多角色隔离** | ✅ Profile 切换 | ✅ 独立 session key |
-| **Parent-Child 隔离** | ❌ 无（tool_call 是外部进程） | ✅ 独立 session key |
+| **Parent-Child 隔离** | ⚠️ claude-code tool_call 无隔离；delegate_task 有隔离（parent_session_id 追踪） | ✅ 独立 session key |
 | **流式转发** | ❌ 无 | ✅ stream relay |
 | **Session 管理** | ❌ 无 | ✅ AcpSessionManager |
 | **生命周期管理** | ❌ 无 | ⚠️ 有但不完善（超时不自杀） |
@@ -331,9 +348,7 @@ flowchart TD
 
 ---
 
-## 📦 参考 SKILL
+## 📦 SKILL：第三章实战精华
 
-本章涉及的 SKILL 文件：
-
-- `SKILLS/HERMES/hermes-subagent-analysis.SKILL.md` — Hermes SubAgent 机制澄清（profile + claude-code tool）
-- `SKILLS/OPENCLAW/openclaw-sessions-spawn-guide.SKILL.md` — OpenClaw ACP spawn 实战指南
+- [Hermes 实战指南（All-in-One）](Hermes配置与优化.md)
+- [OpenClaw 实战指南（All-in-One）](OpenClaw配置与优化.md)

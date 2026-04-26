@@ -23,23 +23,23 @@ Hermes 的上下文由三个层次组成：
 ```mermaid
 flowchart TB
     subgraph Layer1["Layer 1: 系统级上下文（每次全新）"]
-        T1["Tools\n工具列表"]
-        T2["Skills\n所有可用 skill"]
-        T3["System Prompt\nSOUL.md + Memory 快照"]
+        T1["Tools<br>工具列表"]
+        T2["Skills<br>所有可用 skill"]
+        T3["System Prompt<br>SOUL.md + Memory 快照"]
         
-        note1["每次 session 启动时\n从系统配置加载\n不会携带旧信息"]
+        note1["每次 session 启动时<br>从系统配置加载<br>不会携带旧信息"]
     end
 
     subgraph Layer2["Layer 2: Session Context（≈1.5K tokens）"]
-        S1["<memory-context>\nMemory 快照注入"]
+        S1["<memory-context><br>Memory 快照注入"]
         
-        note2["从 _system_prompt_snapshot\n注入，约 1,500 tokens\nmid-session 写入不同步更新"]
+        note2["从 _system_prompt_snapshot<br>注入，约 1,500 tokens<br>mid-session 写入不同步更新"]
     end
 
     subgraph Layer3["Layer 3: 对话历史"]
-        H1["所有消息\n(messages array)"]
+        H1["所有消息<br>(messages array)"]
         
-        note3["完整保留\n直到被截断"]
+        note3["完整保留<br>直到被截断"]
     end
 
     style Layer1 fill:#e1f5fe
@@ -135,12 +135,20 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 **这就是为什么"新建的记忆在下一个问题里没有被记住"。**
 
-### 根因二：两套 Provider 简单拼接无去重（`memory_manager.py:163-174`）
+> 💡 【3句话版本】
+> - 它就像**把当天的日记锁进保险箱，但明天才能打开**——你今天写入的内容（`add()`）被存到了磁盘，但 `_system_prompt_snapshot` 在 session 启动时就冻结了，不会同步更新。
+> - 但问题是**下一个问题来的时候，用的还是昨天（上个 session）打开的那本日记**——新内容根本不在上下文里，Agent 只能靠猜。
+> - 解决办法是**每次改完 MEMORY.md 开一个新 session**，或者把真正重要的信息直接写进 SOUL.md（不走 memory 系统）。
+
+![snapshot 冻结——日记锁进保险箱明天才能打开](assets/ch04-snapshot-freeze.png)
+
+### 根因二：Provider 简单拼接无去重，最多三层内容并行（`memory_manager.py:157-174`）
+
+`build_system_prompt()` 把所有 provider 的 `system_prompt_block()` 结果简单追加：
 
 ```python
 # agent/memory_manager.py - build_system_prompt() 方法
 def build_system_prompt(self) -> str:
-    """Collect system prompt blocks from all providers."""
     blocks = []
     for provider in self._providers:
         try:
@@ -152,26 +160,29 @@ def build_system_prompt(self) -> str:
     return "\n\n".join(blocks)
 ```
 
-**Provider A 说"用户叫月明"，Provider B 也说"用户叫月明"，两者都注入，出现重复。**
-如果两者说的不完全一致，**Agent 以哪个为准？这是未定义行为。**
+如果两个 provider 都写了同一个事实（BuiltinMemoryProvider 说"不加糖"，Honcho 也说"不加糖"），两者都注入，不会去重。Agent 以哪个为准是未定义行为。
 
-### 根因三：BuiltinMemoryProvider 始终启用，无法移除
+> 💡 【3句话版本】
+> - 它就像**两个秘书各记各的，你问她们同一个问题，答案可能不一样**——BuiltinMemoryProvider 和 ExternalProvider 各自独立写入，拼接时无优先级、无去重。
+> - 但问题是**两套系统里同一个事实可能打架**，Provider A 说"不加糖"，Provider B 说"加糖"，Agent 不知道该信谁。
+> - 解决办法是**只留一个 Provider**（把 External Provider 关掉），或明确告诉 Agent 以哪个 Provider 的内容为准。
+
+![Provider 拼接无去重——两套系统各记各的](assets/ch04-provider-dedup.png)
+
+### 根因三：外部 Provider 启用时，BuiltinMemoryProvider 无法移除
+
+`BuiltinMemoryProvider`（MEMORY.md / USER.md）是内置的默认 provider，配了外部 Provider 后，两套并行，没有同步机制：
 
 ```python
-# agent/memory_manager.py:163-174
-# add_provider() 方法
-is_builtin = provider.name == "builtin"
-if not is_builtin:
-    if self._has_external:
-        # 第二个外部 Provider 被拒绝
-        logger.warning("Rejected memory provider '%s' — external provider '%s' is already registered.", ...)
-        return
-    self._has_external = True
+# agent/memory_manager.py:7
+"The BuiltinMemoryProvider is always registered first and cannot be removed."
 ```
 
-- `BuiltinMemoryProvider` 始终是第一个 Provider，**无法移除**
-- 只能注册**一个**外部 Provider（第二个被拒绝）
-- 两套 Provider 独立运行，没有同步机制
+如果同时启用了 Honcho 或 Mem0，会变成：BuiltinMemoryProvider 写一份，外部 Provider 写一份，拼接时无优先级、无去重。
+
+**不用外部 Provider 的人不受影响——单 provider 没有这个问题。**
+
+![两套 Provider 并行无同步——BuiltinMemoryProvider 始终存在，配了外部 Provider 后才变成两套](assets/ch04-builtin-cant-remove.png)
 
 ### 根因四：agent_context 隔离不严格
 
@@ -185,6 +196,13 @@ prompts would corrupt user representations).
 
 「应」不是「必须」。如果某个 Provider 实现有 bug，或者外部 Provider 根本没判断 `agent_context`，就会把 subagent 或 cron 的信息写进用户记忆。
 
+> 💡 【3句话版本】
+> - 它就像**清洁工进了你的私人书房扫地**——subagent 或 cron 的信息本不该写入用户记忆，但如果 Provider 实现有 bug，就会"顺手"写进去。
+> - 但问题是**你不知道什么时候被"顺手"了**——隔离是"应"做的，不是"必须"做的，取决于每个 Provider 的实现质量。
+> - 解决办法是**在 External Provider 实现里严格判断 `agent_context`**，只允许 primary context 写入用户记忆。
+
+![agent_context 隔离不严格——清洁工进了你的私人书房](assets/ch04-context-leak.png)
+
 ---
 
 ## 4.4 记忆紊乱完整因果链
@@ -192,22 +210,22 @@ prompts would corrupt user representations).
 ```mermaid
 flowchart TB
     subgraph 触发层["触发事件"]
-        A1["画图请求\n(多 Skill 并存)"]
-        A2["长会话\n(30+ 轮)"]
-        A3["多平台并发\n(飞书 + Discord)"]
+        A1["画图请求<br>(多 Skill 并存)"]
+        A2["长会话<br>(30+ 轮)"]
+        A3["多平台并发<br>(飞书 + Discord)"]
     end
 
     subgraph 根因层["三层根因（经源码证实）"]
-        B1["_system_prompt_snapshot\nmid-session 不同步更新"]
-        B2["两套 Provider 简单拼接\n无去重、无优先级"]
-        B3["BuiltinMemoryProvider\n始终启用无法移除\n只能注册一个外部 Provider"]
-        B4["agent_context\n隔离不严格"]
+        B1["_system_prompt_snapshot<br>mid-session 不同步更新"]
+        B2["两套 Provider 简单拼接<br>无去重、无优先级"]
+        B3["外部 Provider 启用时\nBuiltinMemoryProvider 无法移除\n两套并行无同步"]
+        B4["agent_context<br>隔离不严格"]
     end
 
     subgraph 表现层["记忆紊乱表现"]
-        C1["新记忆在当前\nsession 不可见"]
-        C2["同一事实\n出现多次"]
-        C3["subagent 内容\n污染用户记忆"]
+        C1["新记忆在当前<br>session 不可见"]
+        C2["同一事实<br>出现多次"]
+        C3["subagent 内容<br>污染用户记忆"]
     end
 
     A1 --> B1
@@ -241,6 +259,8 @@ flowchart TB
 
 **两套系统各管各的，没有同步。** 这就是 Hermes BuiltinMemoryProvider 和 ExternalProvider 的关系。
 
+![两套记忆系统——秘书打架](assets/ch04-two-memory-systems.png)
+
 ---
 
 ## 4.6 OpenClaw 的 QMD + LanceDB 方案
@@ -262,20 +282,21 @@ OpenClaw 记忆系统设计原则：
 > **优点：** 文件级隔离比 Hermes 的表级隔离更干净，不同 session 的向量不会混在一起。
 > **坑点：** CLI subprocess 有冷启动延迟，llama.cpp 模型加载慢，memory.db 并发写入有 lock timeout。
 
+
 ### 架构图
 
 ```mermaid
 flowchart TD
     subgraph Query["queryMemory()"]
-        QM["runCliCommand\nspawn qmd subprocess"]
+        QM["runCliCommand<br>spawn qmd subprocess"]
     end
 
     subgraph Vector["LanceDB Vector Store"]
-        LD["~/.openclaw/memory/\n├─ sessions/*.sqlite\n└─ memory.db (共享)"]
+        LD["~/.openclaw/memory/<br>├─ sessions/*.sqlite<br>└─ memory.db (共享)"]
     end
 
     subgraph Merge["mergeContext()"]
-        MC["memory search\n+ session recent\n+ project context"]
+        MC["memory search<br>+ session recent<br>+ project context"]
     end
 
     QM -->|qmd CLI| LD
@@ -320,7 +341,16 @@ queryMemory() 的 scope 参数用于限制查询范围：
 >
 > 源码中 scope 只是传给 qmd CLI，**如果 qmd 版本不对或参数解析出错，scope 过滤失效，全局搜索**。后果是：在 session A 中做的项目决策， session B 查询时可能拿到 session A 的敏感内容。Session 隔离只做到了**存储层**，没做到**查询层**。
 
+> 💡 【3句话版本】
+> - 它就像**图书馆说"这本只能在本馆阅读"，但门禁系统坏了，谁都能进**——`scope` 参数设计上是隔离机制，但参数解析出错时直接失效，变相全局搜索。
+> - 但问题是**session A 的项目决策可能泄露到 session B**，隐私和隔离都成了空话。
+> - 解决办法是**定期查 scope 参数是否生效**（用不同 session 测试），同时不要在 memory 里存真正敏感的隐私内容。
+
+![scope 参数失效——图书馆门禁坏了](assets/ch04-scope-fail.png)
+
 ### 坑位速查
+
+
 
 | 坑 | 描述 | 影响 |
 |----|------|------|
@@ -330,6 +360,11 @@ queryMemory() 的 scope 参数用于限制查询范围：
 | **QMD scope 参数过滤失效** | 参数解析出错时默默忽略，全局搜索 | 跨 session 隐私泄露 |
 | **.jsonl 文件 append-only 不去重** | 重试时 append 重复 entry | semantic search 结果偏差 |
 | **Dreaming session 幽灵残留** | gateway 重启后不恢复，占用空间 | 磁盘空间浪费 |
+
+> 💡 【3句话版本】
+> - 冷启动延迟就像**每次查资料都要重新烧开水**——QMD CLI 每次都要 spawn 子进程，llama.cpp 每次都要加载模型，3-8 秒的等待是真实代价。
+> - 并发写入 lock 就像**停车场入口闸机坏了**——WAL 机制本身没问题，但高并发时 lock timeout 导致 memory 查询直接失败。
+> - 解决办法是**gateway 启动后做一次 warmup query**（预热模型），高并发场景下降低 memory 写入频率，或给 `memory.db` 设置更长的 timeout。
 
 ---
 
@@ -369,12 +404,12 @@ grep -r "honcho\|mem0\|hindsight\|external" \
 ```mermaid
 flowchart TD
     A["开始自检"] --> B{"MEMORY.md > 6KB？"}
-    B -->|是| C["⚠️ 内容臃肿\n定期手动清理"]
+    B -->|是| C["⚠️ 内容臃肿<br>定期手动清理"]
     B -->|否| D{"两套 Provider 并行？"}
-    D -->|是| E["⚠️ 关闭 External Provider\n或只保留一个"]
+    D -->|是| E["⚠️ 关闭 External Provider<br>或只保留一个"]
     D -->|否| F{"新记忆在下一轮不可见？"}
-    F -->|是| G["⚠️ _system_prompt_snapshot 冻结\n开新 session 生效"]
-    F -->|否| H["✅ 系统正常\n定期维护即可"]
+    F -->|是| G["⚠️ _system_prompt_snapshot 冻结<br>开新 session 生效"]
+    F -->|否| H["✅ 系统正常<br>定期维护即可"]
 
     style C fill:#ffcccc
     style E fill:#ffcccc
@@ -436,10 +471,7 @@ memory:
 
 ---
 
-## 📦 参考 SKILL
+## 📦 SKILL：第四章实战精华
 
-本章涉及的 SKILL 文件：
-
-- `SKILLS/OPENCLAW/openclaw-memory-concurrency-guide.SKILL.md` — OpenClaw Memory 并发避坑指南
-
-> ⚠️ **「存疑/待核实」**：原计划引用的 `hermes-session-memory-cleaner.SKILL.md` 已删除。该 skill 涉及的 `session-memory`、`summarize_sessions.py`、`session_context.txt` 等说法**未经源码证实**，可能是错误的文件名/路径。
+- [Hermes 实战指南（All-in-One）](Hermes配置与优化.md)
+- [OpenClaw 实战指南（All-in-One）](OpenClaw配置与优化.md)

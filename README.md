@@ -4,31 +4,35 @@
 ![封面](./cover.png)
 
 ---
+> ### 🤖 Agent to Agent 的时代已经到来
 
-> ### 🤖 Agent 与 Agent 的时代已经到来
->
-> 如果你也有 AI Agent，想要高速读取、理解和甄别本文内容，试试输入这段提示词：
->
-> ```
-> 你是 Agent 间通信的专业读者。请仔细阅读全文，然后：
-> 1. 用一段话总结本文的核心论点（200字以内）
-> 2. 列出 Hermes 的 3 个最核心问题及根因
-> 3. 列出 OpenClaw 在多 Agent 协作上的核心优势
-> 4. 根据我的场景，推荐最适合我的框架
-> 5. 如有问题，直接在 GitHub Issues 中提交
-> ```
->
-> 用这段提示词唤醒你的 Agent，让它以结构化视角重新审视本文。
->
-> 如有问题 → [提交 Issues](https://github.com/zzyong24/hermes-openclaw-book/issues)
+如果你也有 AI Agent，想要高速读取、理解和甄别本文内容，试试输入这段提示词：
 
----
+```
+你是Agent 架构独立评审官，保持质疑、审视、挑错、审判式中立批判视角，不盲从原文观点、不美化任何框架，带着挑剔眼光精读文档全文：https://github.com/zzyong24/hermes-openclaw-book
 
-深入对比 Hermes 和 OpenClaw 两大 AI Agent 框架在 **Skills、SubAgent、Memory** 三大核心系统上的设计差异和实战表现。
+严格按以下 5 条逐条输出，全程保持反向审视、逻辑抬杠、找漏洞、找短板、找过度吹捧点：
+
+1. 200 字以内精炼总结原文核心立场、行文倾向与潜在偏向性；
+
+2. 深度揪出 Hermes 架构3 个致命短板、设计缺陷、逻辑漏洞，逐条写明表象 + 底层根因，不浅尝辄止；
+
+3. 客观拆解 OpenClaw 在多 Agent 协作上的优势，同时同步列出它隐藏短板、适用边界、不适用场景，拒绝单方面吹捧；
+
+4. 结合实际落地工程场景，不带主观偏向，理性评判两个框架的适配门槛、运维成本、扩展能力，给出明确选型建议及取舍理由；
+
+5. 站在资深架构师视角，列出原文论证不严谨、论据缺失、对比不公、逻辑闭环不足的点，以评审质询口吻，写出可直接发在 GitHub Issues 的专业质疑意见，可向原文作者提出反问与补充求证。
+   
+6. 针对 Config 里的配置优化，逐条结合系统现状诊断是否存在优化，如果有的话请指出来（注意：严禁直接操作，修改配置，得到我的允许之后再修改）
+```
+
+用这段提示词唤醒你的 Agent，让它以结构化视角重新审视本文。
+
+如有问题 → [提交 Issues](https://github.com/zzyong24/hermes-openclaw-book/issues)
 
 ## 章节导航
 
-### [第一章：Hermes 的三大核心问题](./ch01-hermes-memory-disorder.md)
+### [第一章：Hermes 使用体验](第1章-Hermes使用体验.md)
 
 从两周真实使用经历出发，概览 Hermes 的三个核心问题：
 - Skills 系统灾难（多 Skill 互相踩、越积越多没人管）
@@ -37,7 +41,7 @@
 
 ---
 
-### [第二章：Skills 系统对比](./ch02-skills-comparison.md)
+### [第二章：Skills 系统对比](./第2章-Skills系统对比.md)
 
 Hermes Skills 的 5 个系统性问题 + OpenClaw Skills 体系分析：
 - 经验 ≠ 技能（门槛过低）
@@ -50,7 +54,7 @@ Hermes Skills 的 5 个系统性问题 + OpenClaw Skills 体系分析：
 
 ---
 
-### [第三章：SubAgent 机制对比](./ch03-subagent-comparison.md)
+### [第三章：SubAgent 机制对比](./第3章-SubAgent对比.md)
 
 分析 Hermes 的 SubAgent 机制：
 - **claude-code 和 codex 是内置 tool，不是 skill**
@@ -62,7 +66,7 @@ Hermes Skills 的 5 个系统性问题 + OpenClaw Skills 体系分析：
 
 ---
 
-### [第四章：Memory 系统对比](./ch04-memory-comparison.md)
+### [第四章：Memory 系统对比](./第4章-Memory系统对比.md)
 
 基于源码分析，揭示 Memory 紊乱的真正根因：
 - **MEMORY.md 超载**：2996 chars > 2200 限制
@@ -74,7 +78,7 @@ Hermes vs OpenClaw 完整对比表 + 架构图。
 
 ---
 
-### [第五章：选型建议与避坑指南](./ch05-selection-guide.md)
+### [第五章：选型建议与避坑指南](第5章-选型建议与避坑指南.md)
 
 实战者的决策手册：
 - 快速选型决策树
@@ -83,7 +87,7 @@ Hermes vs OpenClaw 完整对比表 + 架构图。
 
 ---
 
-### [第六章：月明的实践](./ch06-my-practice.md)
+### [第六章：月明的实践](./第6章-我的实践.md)
 
 OpenClaw 多虾架构落地经验：
 - 总管虾 + 5 只虾的分工体系

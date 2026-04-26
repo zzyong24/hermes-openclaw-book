@@ -96,18 +96,13 @@ OpenClaw 多虾架构落地经验：
 
 ---
 
-## Config 目录
+## 实战配置与优化
 
-独立的 Config/SKILL 文件目录，可被 AI Agent 直接加载运行：
+独立的配置优化文件，可被 AI Agent 直接加载运行：
 
 ```
-Config/
-├── HERMES/           # 给 Hermes 用的 SKILL
-│   ├── hermes-skills-auto-creation-control.SKILL.md
-│   └── hermes-subagent-analysis.SKILL.md
-└── OPENCLAW/         # 给 OpenClaw 用的 SKILL
-    ├── openclaw-memory-concurrency-guide.SKILL.md
-    └── openclaw-sessions-spawn-guide.SKILL.md
+Hermes配置与优化.md    # Hermes 实战指南：Skills/Memory/SubAgent 避坑 + 配置方案
+OpenClaw配置与优化.md  # OpenClaw 实战指南：ACP Spawn/Memory/飞书Bot/避坑清单
 ```
 
 ---

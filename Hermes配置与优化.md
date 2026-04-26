@@ -130,7 +130,7 @@ find ~/.hermes/skills/ -name "SKILL.md" -type f \
 ## 三层上下文结构
 
 ```mermaid
-flowchart TB
+graph TB
     subgraph L1["Layer1: 系统级上下文（每次全新）"]
         T1["Tools / Skills / System Prompt"]
     end
@@ -212,7 +212,7 @@ memory:
 ## 判断树
 
 ```mermaid
-flowchart TD
+graph TD
     A["开始自检"] --> B{"MEMORY.md > 6KB？"}
     B -->|是| C["⚠️ 内容臃肿\n定期手动清理"]
     B -->|否| D{"两套 Provider 并行？"}

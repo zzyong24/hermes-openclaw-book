@@ -1,4 +1,4 @@
-# 第四章：Memory 系统对比 — 三层上下文结构与 Provider 拼接问题
+# 第四章：Memory 系统对比 — 三层记忆架构与 Provider 拼接问题
 
 > 📌 **章节性质说明**
 >
@@ -12,34 +12,34 @@
 
 很多人以为 Hermes 的记忆紊乱是"skill 记忆出了问题"。
 
-**真正的问题根源是：三层上下文结构 + Provider 简单拼接无去重。**
+**真正的问题根源是：三层记忆架构 + Provider 简单拼接无去重。**
 
 ---
 
-## 4.2 Hermes 上下文三层次 — 理解记忆紊乱的钥匙
+## 4.2 Hermes 三层记忆架构 — 理解记忆的关键
 
-Hermes 的上下文由三个层次组成：
+
+Hermes 的记忆由三层构成，每层有明确的职责：
 
 ```mermaid
-flowchart TB
-    subgraph Layer1["Layer 1: 系统级上下文（每次全新）"]
-        T1["Tools<br>工具列表"]
-        T2["Skills<br>所有可用 skill"]
-        T3["System Prompt<br>SOUL.md + Memory 快照"]
+graph TB
+    subgraph Layer1["Layer 1: System Prompt（SOUL.md）"]
+        T1["SOUL.md<br>角色定义、行为准则"]
         
-        note1["每次 session 启动时<br>从系统配置加载<br>不会携带旧信息"]
+        note1["Session 启动时加载<br>整个 Session 期间不变"]
     end
 
-    subgraph Layer2["Layer 2: Session Context（≈1.5K tokens）"]
-        S1["<memory-context><br>Memory 快照注入"]
+    subgraph Layer2["Layer 2: Persistent Memory（MEMORY.md / USER.md）"]
+        T2["MEMORY.md<br>跨 Session 持久记忆"]
+        T3["USER.md<br>用户偏好持久记忆"]
         
-        note2["从 _system_prompt_snapshot<br>注入，约 1,500 tokens<br>mid-session 写入不同步更新"]
+        note2["load_from_disk() 时注入<br>Snapshot 冻结后 mid-session 不更新"]
     end
 
-    subgraph Layer3["Layer 3: 对话历史"]
-        H1["所有消息<br>(messages array)"]
+    subgraph Layer3["Layer 3: Session Memory（SQLite）"]
+        T4["hermes_state.db<br>每轮对话持久化"]
         
-        note3["完整保留<br>直到被截断"]
+        note3["实时写入<br>整个对话历史保留"]
     end
 
     style Layer1 fill:#e1f5fe
@@ -47,13 +47,13 @@ flowchart TB
     style Layer3 fill:#f3e5f5
 ```
 
-### 各层次的加载时机
+### 各层加载时机与行为
 
 | 层次 | 内容 | 加载时机 | Mid-session 写入是否同步 |
 |------|------|---------|----------------------|
-| **Layer 1** | tools、skills、system prompt | 每次 session 启动时全新加载 | 不适用（全新） |
-| **Layer 2** | `<memory-context>` block from `_system_prompt_snapshot` | session 启动时从 `load_from_disk()` 快照注入 | **否**（frozen snapshot） |
-| **Layer 3** | 所有消息 | 实时累积，直到截断 | 不适用 |
+| **Layer 1** | SOUL.md（System Prompt） | Session 启动时全新加载 | 不适用（全新） |
+| **Layer 2** | MEMORY.md / USER.md 快照 | `load_from_disk()` 时捕获 snapshot | **否**（frozen snapshot） |
+| **Layer 3** | hermes_state.db（SQLite） | 实时累积每轮对话 | 是（实时持久化） |
 
 ### 源码证据
 
@@ -122,7 +122,7 @@ def format_for_system_prompt(self, target: str) -> Optional[str]:
 
 ---
 
-## 4.3 记忆紊乱的真正根因：三层结构 + Provider 简单拼接
+## 4.3 记忆紊乱的真正根因：三层架构 + Provider 简单拼接
 
 ### 根因一：_system_prompt_snapshot 在 session 启动后 frozen
 
@@ -208,7 +208,7 @@ prompts would corrupt user representations).
 ## 4.4 记忆紊乱完整因果链
 
 ```mermaid
-flowchart TB
+graph TB
     subgraph 触发层["触发事件"]
         A1["画图请求<br>(多 Skill 并存)"]
         A2["长会话<br>(30+ 轮)"]
@@ -277,34 +277,76 @@ OpenClaw 记忆系统设计原则：
 4. mergeContext() 聚合 memory search + session recent + project context
 ```
 
-> 🧠 **原创分析：架构优点与工程坑点**
->
-> **优点：** 文件级隔离比 Hermes 的表级隔离更干净，不同 session 的向量不会混在一起。
-> **坑点：** CLI subprocess 有冷启动延迟，llama.cpp 模型加载慢，memory.db 并发写入有 lock timeout。
+### OpenClaw Memory 完整架构
 
-
-### 架构图
+OpenClaw 的 Memory 系统由三个核心组件构成：
 
 ```mermaid
-flowchart TD
+graph TD
     subgraph Query["queryMemory()"]
-        QM["runCliCommand<br>spawn qmd subprocess"]
+        QM["queryMemory()<br>语义搜索入口"]
+        QMD["QMD Query Engine<br>语义搜索核心"]
     end
 
-    subgraph Vector["LanceDB Vector Store"]
-        LD["~/.openclaw/memory/<br>├─ sessions/*.sqlite<br>└─ memory.db (共享)"]
+    subgraph Store["LanceDB Vector Store"]
+        LD["~/.openclaw/memory/
+├─ sessions/*.sqlite
+├─ memory.db (共享向量索引)
+└─ per-session 向量索引"]
     end
 
     subgraph Merge["mergeContext()"]
-        MC["memory search<br>+ session recent<br>+ project context"]
+        MC["memory search
++ session recent
++ project context"]
     end
 
-    QM -->|qmd CLI| LD
-    LD -->|结果| MC
+    QM -->|runCliCommand| QMD
+    QMD -->|qmd CLI subprocess| LD
+    LD -->|向量检索结果| MC
 
     style QM fill:#ffcccc,stroke:#cc0000
+    style QMD fill:#ffcc99,stroke:#cc6600
     style LD fill:#ccffcc,stroke:#00aa00
 ```
+
+**核心组件说明：**
+
+| 组件 | 职责 | 说明 |
+|------|------|------|
+| **queryMemory()** | 语义搜索入口 | AI 调用此工具发起记忆查询 |
+| **QMD Query Engine** | 语义搜索核心 | 解析 query，执行向量相似度搜索 |
+| **LanceDB Vector Store** | 向量存储层 | per-session 级别的向量索引，存储在 `.sqlite` 文件中 |
+| **mergeContext()** | 上下文聚合 | 将 memory search + session recent + project context 合并 |
+
+**查询流程：**
+
+```
+queryMemory("我上次调研了什么？")
+    ↓
+runCliCommand → qmd CLI subprocess
+    ↓
+QMD Query Engine 解析 query
+    ↓
+LanceDB Vector Store 执行向量相似度搜索
+    ↓
+返回最相关的记忆片段
+    ↓
+mergeContext() 与 session recent / project context 聚合
+```
+
+**设计理念：显式优于隐式**
+
+OpenClaw 的 Memory 设计遵循"显式优于隐式"原则：
+- 所有记忆都通过 `add()` 显式写入
+- 查询结果明确标注来源（session / user / workspace）
+- 不依赖隐式的上下文推断
+
+> 🧠 **原创分析：架构优点与工程坑点**
+>
+> **优点：** 文件级隔离比 Hermes 的表级隔离更干净，不同 session 的向量不会混在一起。QMD 提供语义搜索能力，比 Hermes 的 FTS5 关键词搜索更精准。
+>
+> **坑点：** CLI subprocess 有冷启动延迟，llama.cpp 模型加载慢，memory.db 并发写入有 lock timeout。
 
 ---
 
@@ -402,7 +444,7 @@ grep -r "honcho\|mem0\|hindsight\|external" \
 ### 判断树
 
 ```mermaid
-flowchart TD
+graph TD
     A["开始自检"] --> B{"MEMORY.md > 6KB？"}
     B -->|是| C["⚠️ 内容臃肿<br>定期手动清理"]
     B -->|否| D{"两套 Provider 并行？"}

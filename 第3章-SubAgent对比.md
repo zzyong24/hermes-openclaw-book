@@ -7,85 +7,140 @@
 
 ---
 
-## 3.1 Hermes 的 Profile 机制
+## 3.1 Hermes Profile 机制的真实能力边界
 
-很多人以为 Hermes "根本没有 SubAgent"，但实际上 Hermes 有 profile 机制。
+很多人以为 Hermes "根本没有 SubAgent"，或者"Profile 就是多角色切换"——真相在两者之间。
 
-Hermes 有 **profile 机制**，每个 profile 是**独立的 HERMES_HOME 目录**：
+**核心事实**：Profile 是**完全独立的 Hermes 实例**，不是角色切换机制。
+
+### Profile 的实际含义
 
 ```bash
-# ~/.hermes/profiles/
-├── default/      # 主 profile（等价于 ~/.hermes）
-├── coder/         # 独立 HERMES_HOME，有自己的 config、skills、memory
-└── creative/       # 同上，各自分离
+hermes -p coder chat
 ```
 
-运行不同 profile 等于启动**不同的 hermes 进程**，有各自独立的 skills、memory、config。**不是同一个 Agent 内动态切换。** 这本质上是"多套独立配置"，而非多 Agent 协作。
+这一条命令背后发生的是：设置 `HERMES_HOME=~/.hermes/profiles/coder`，然后启动一个**全新的 hermes 进程**。
+
+源码证据（`main.py:146`）：
+```python
+os.environ["HERMES_HOME"] = hermes_home  # profile 目录
+# 随后启动新进程，加载该 HERMES_HOME 下的所有配置
+```
+
+wrapper 脚本更是直接（`profiles.py:241`）：
+```sh
+exec hermes -p {name} "$@"   # 每次都是 exec 新进程
+```
+
+profiles.py 的模块注释写得清清楚楚：
+
+> Each profile is a **fully independent HERMES_HOME directory** with its own config.yaml, .env, memory, sessions, skills, **gateway**, cron, and logs.
+
+每个 profile 有自己的 gateway 进程——这是进程隔离，不是配置切换。
+
+### Profile 之间**无法通信**
+
+这是最关键的误区：Profile A 和 Profile B 是两个完全隔离的进程，没有：
+- 进程间通信机制
+- 任务委托协议
+- 结果汇总机制
+
+你不能让 profile A 的 Agent 把任务交给 profile B 的 Agent，也没有"总管 profile 分发任务给 worker profile"这种设计。
+
+**实用场景**：Profile 适合做**工作区隔离**——比如你有一个专门做代码的 profile（独立的记忆、独立的 skills、独立的 gateway），和一个专门做内容创作的 profile。两者完全独立，按需切换，不是协作。
+
+### Hermes 的真实 SubAgent 机制
+
+| 机制 | 形态 | 隔离性 |
+|------|------|--------|
+| **Profile** | 独立进程 + 独立 gateway | 完全隔离（进程级） |
+| **claude-code tool** | 外部 CLI 进程 | 无 session 关联 |
+| **delegate_task** | 同进程内子 session | 有隔离（parent_session_id） |
+
+> 💡 【3句话版本】
+> - Profile 是**完全独立的 Hermes 实例**（进程 + gateway），不是角色切换。
+> - Profile 之间**没有通信机制**，不存在"团队协作"——你不能委托 profile A 的 Agent 去调用 profile B 的 Agent。
+> - Hermes 真正的 SubAgent 机制是 `delegate_task`（同进程内 session 隔离）和 `claude-code tool`（外部 CLI，无隔离）。
 
 ---
 
-## 3.2 Hermes 的 "SubAgent"：claude-code / codex 工具
+## 3.2 Hermes 的 SubAgent：delegate_task vs 外部 CLI Skill
 
-### claude-code 和 codex 的实际形态
+### 真正的 SubAgent 机制：delegate_task
 
-`claude-code` 和 `codex` 是 Hermes **内置的 tool 实现**（在 `tools/` 目录下），不是 `~/.hermes/skills/` 里的 SKILL.md 文件。
+Hermes 真正的 SubAgent 机制是 `delegate_task`（`tools/delegate_tool.py`），它**在同进程内启动独立的 AIAgent 子会话**，具有：
+
+- **独立 session key**：`parent_session_id` 追踪父子关系
+- **隔离上下文**：子 agent 从空白会话开始，不继承父 agent 的中间推理过程
+- **受限 toolset**：`DELEGATE_BLOCKED_TOOLS` 排除 `delegate_task`（防递归）、`clarify`（防用户交互）、`memory`（防写共享记忆）等
+- **同步阻塞**：父 agent 等待所有子 agent 完成（`ThreadPoolExecutor`）
+
+```python
+# delegate_tool.py 的核心隔离机制
+DELEGATE_BLOCKED_TOOLS = frozenset([
+    "delegate_task",   # 防递归
+    "clarify",         # 防用户交互
+    "memory",          # 防写共享记忆
+    "send_message",    # 防跨平台副作用
+    "execute_code",    # 强制步进推理
+])
+```
+
+`MAX_DEPTH = 1`：默认只支持父 → 子一层的 flat 结构，grandchild 被拒绝（除非 `max_spawn_depth` 调高）。
+
+### 另一种委托方式：claude-code / codex Skill
+
+`claude-code` 和 `codex` 不是 Hermes 内置 tool——它们是**技能（SKILL）**，安装在 `~/.hermes/skills/autonomous-ai-agents/` 下，本质是调用外部 CLI 进程。
 
 ```
-Hermes Agent 源码
-└── tools/
-    ├── claude_code_tool.py   ← 内置 tool，不是 skill
-    └── codex_tool.py          ← 内置 tool，不是 skill
+~/.hermes/skills/autonomous-ai-agents/
+├── claude-code/SKILL.md   ← 技能（Skill），不是 tool
+└── codex/SKILL.md          ← 技能（Skill），不是 tool
 ```
 
-它们的使用方式是 `tool_call`，调用外部 CLI 进程：
-- 没有 session key
-- 没有流式转发（streaming relay）
-- 没有生命周期管理
+调用方式：通过 `terminal()` 工具执行 `claude -p '...'`（print 模式）或交互式 PTY 模式。源码证据（`claude-code/SKILL.md:37`）：
 
-### Hermes 真正的 SubAgent 架构图
+```bash
+terminal(command="claude -p 'Add error handling to all API calls in src/' --allowedTools 'Read,Edit' --max-turns 10", workdir="/path/to/project", timeout=120)
+```
+
+**关键区别**：
+
+| 维度 | `delegate_task` | `claude-code` Skill |
+|------|----------------|---------------------|
+| 隔离性 | ✅ 同进程子 session，`parent_session_id` 追踪 | ❌ 无 session 关联 |
+| 调用方式 | ACP 协议，内部 spawn | `terminal()` 调用外部 CLI |
+| 生命周期管理 | 父 agent 同步等待 | CLI 进程独立，Hermes 只等返回值 |
+| 上下文继承 | 空白会话 | 无 |
+
+### Hermes SubAgent 真实架构图
 
 ```mermaid
-flowchart LR
-    A["Hermes Agent<br>(Profile: default)"] -->|tool_call| B["Claude Code CLI<br>(外部进程)"]
-    A -->|tool_call| C["Codex CLI<br>(外部进程)"]
+graph LR
+    A["Hermes Agent<br/>(Profile: default)"] -->|delegate_task| B["子 agent<br/>(线程，同进程)"]
+    A -->|terminal| C["Claude Code CLI<br/>(外部进程)"]
 
-    A -.->|不同 Hermes 进程| D["Profile: coder<br>(独立 HERMES_HOME)"]
-    A -.->|不同 Hermes 进程| E["Profile: creative<br>(独立 HERMES_HOME)"]
+    A -.->|不同 Hermes 进程| D["Profile: coder<br/>(独立 HERMES_HOME)"]
+    A -.->|不同 Hermes 进程| E["Profile: creative<br/>(独立 HERMES_HOME)"]
 
-    style B fill:#ffcccc,stroke:#cc0000
+    style B fill:#ccffcc,stroke:#00aa00
     style C fill:#ffcccc,stroke:#cc0000
     style D fill:#ccffcc,stroke:#00aa00
     style E fill:#ccffcc,stroke:#00aa00
 ```
 
-**真正的问题：这些是"外部工具调用"而不是"真正的 Session 隔离委托"。**
+**真正的问题：`claude-code` Skill 调用外部 CLI 进程后，没有任何 session 关联、stream relay 或生命周期管理——过程对你完全黑盒。**
 
 > 💡 【3句话版本】
-> - 它就像**派机器人去执行任务，但只给它一个出发指令，没有任何追踪器**——`claude-code` 和 `codex` 是 Hermes 内置 tool，调用后只返回一个结果，过程对你完全黑盒。
-> - 但问题是**任务跑到一半断了你不知道进度，跑到一半成功了你也可能不知道结果**——没有 session key、没有流式转发、没有生命周期管理。
-> - 解决办法是**用 OpenClaw ACP `sessions_spawn`**，每个子任务有独立 session key 和 stream relay，可以实时看到执行过程。
+> - Hermes 真正的 SubAgent 是 **`delegate_task`**——同进程内独立 session，`parent_session_id` 追踪，有隔离。
+> - `claude-code` 和 `codex` 是**技能（SKILL）**，通过 `terminal()` 调用外部 CLI，**没有 session 关联**，任务跑到一半断了你不知道进度。
+> - 解决办法是**用 `delegate_task`** 做真正的隔离委托，用 OpenClaw ACP `sessions_spawn` 做更完整的多 agent 协作。
 
 ---
 
-## 3.3 Hermes Skills 目录全解析
-
-### 📁 三大目录必须分清
+## 3.3 Hermes Skills 目录结构
 
 ```bash
-~/.hermes/skills/
-├── hermes/          # Hermes 官方/Bundled Skills（来自 hermes-agent 源码包）
-│   ├── skills-diagnosis/SKILL.md
-│   ├── skills-judgment/SKILL.md
-│   ├── hermes-approval-debugging/SKILL.md
-│   └── ...（共10个官方 skill）
-│
-├── mcp/             # MCP 协议集成
-│   ├── mcporter/
-│   └── native-mcp/
-│
-**Skills 目录结构：**
-
-
 ~/.hermes/skills/
 ├── hermes/                      # Hermes 官方/Bundled Skills
 │   ├── skills-diagnosis/
@@ -99,7 +154,7 @@ flowchart LR
     └── ...（数量因使用情况而异）
 ```
 
-**补充说明：** `claude-code` 和 `codex` 不在 `~/.hermes/skills/` 里。它们是内置 tool，实现位于 `tools/` 目录下。
+注意：`claude-code` 和 `codex` 也在 `~/.hermes/skills/autonomous-ai-agents/` 下，它们是**技能（SKILL）**，不是内置 tool。
 
 ---
 
@@ -107,41 +162,49 @@ flowchart LR
 
 ### 什么是 subtask 中断？
 
-"subtask 中断"指的是：当你在 Hermes 里发起一个多步任务（通过 claude-code 或 codex），如果任务执行到一半被打断（用户取消、消息超时、外部信号），任务的执行结果和状态会出现不一致。
+"subtask 中断"指的是：当你在 Hermes 里通过 `claude-code` Skill 发起一个多步任务，如果任务执行到一半被打断（用户取消、消息超时、外部信号），任务的执行结果和状态会出现不一致。
 
 **典型场景：**
 
-1. 你让 Hermes 调用 `claude-code` 执行一个代码重构任务
-2. claude-code 正在跑 `git commit`，还没提交完
+1. 你让 Hermes 调用 `claude-code` Skill 执行一个代码重构任务
+2. `claude` 正在跑 `git commit`，还没提交完
 3. 用户发了新消息，或者飞书连接断了
-4. Hermes 的 tool call 返回了，但返回值可能是不完整的
+4. Hermes 的 `terminal()` 返回了，但返回值可能是不完整的
 5. 主 Agent 拿到不完整的返回值，继续执行，导致状态不一致
+
+**注意**：`delegate_task` 有 session 隔离，中断时至少子 agent 的状态是完整的（由父 agent 的 `ThreadPoolExecutor` 管理）。真正的问题出在 `claude-code` Skill 这种无 session 关联的外部 CLI 调用。
 
 ### 根因：没有 Parent-Child Session 隔离
 
 ```mermaid
-flowchart TD
-    subgraph Hermes["Hermes subtask（无隔离）"]
-        A1["Agent"] -->|tool_call| B1["Claude Code CLI"]
-        B1 -.->|无 session 关联| C1["独立进程<br>状态丢失"]
+graph TD
+    subgraph HermesSkill["Hermes claude-code Skill（无隔离）"]
+        A1["Agent"] -->|terminal| B1["Claude Code CLI"]
+        B1 -.->|无 session 关联| C1["独立进程<br/>状态丢失"]
     end
 
-    subgraph OpenClaw["OpenClaw ACP SubAgent（有隔离）"]
-        A2["Agent"] -->|ACP protocol| B2["SubAgent Session"]
-        B2 -->|独立 session key| C2["完整状态<br>生命周期管理"]
+    subgraph HermesDelegate["Hermes delegate_task（有隔离）"]
+        A2["Agent"] -->|delegate_task| B2["子 agent<br/>(线程，同进程)"]
+        B2 -.->|parent_session_id| C2["独立 session<br/>生命周期受父管理"]
+    end
+
+    subgraph OpenClaw["OpenClaw ACP SubAgent（完整隔离）"]
+        A3["Agent"] -->|ACP protocol| B3["SubAgent Session"]
+        B3 -->|独立 session key| C3["完整状态<br/>生命周期管理"]
     end
 
     style A1 fill:#ffcccc
-    style A2 fill:#ccffcc
+    style B1 fill:#ffcccc,stroke:#cc0000
+    style C1 fill:#ffcccc
+    style A2 fill:#ffcccc
+    style B2 fill:#ccffcc,stroke:#00aa00
+    style C2 fill:#ccffcc
+    style A3 fill:#ccffcc
+    style B3 fill:#ccffcc,stroke:#00aa00
+    style C3 fill:#ccffcc
 ```
 
-Hermes 的"subtask"（通过 claude-code tool 调用）是**没有任何 session 关联**的。
-
-- 没有流式转发（streaming relay）
-- 没有状态同步机制
-- 中断后状态丢失
-
-OpenClaw 的 ACP subagent 有完整的 session 隔离。
+`delegate_task` 有 session 隔离，OpenClaw ACP 更完整。`claude-code` Skill 调用外部 CLI 完全无隔离。
 
 ### 📖 官方内容：on_delegation 钩子
 
@@ -184,13 +247,13 @@ def on_delegation(self, task: str, result: str, *,
 - 你在家里实时收到孩子买牛奶的进度（stream relay）
 - 买完了你回家验收（sessions_yield）
 
-**Hermes claude-code 的方式：**
-- 你把孩子往超市门口一放（tool_call）
+**Hermes claude-code Skill 的方式：**
+- 你把孩子往超市门口一放（terminal() 调用外部 CLI）
 - 你不知道孩子走到哪儿了（无 stream relay）
 - 孩子买没买到、买了什么，你只能等他回来说（返回值可能不完整）
 - 如果孩子中途被截走（中断），你就不知道结果了
 
-**Hermes 的 subtask 是"放养模式"，不是"放手上牵着走"。**
+**`delegate_task` 有 session 隔离，算是"拴着绳子"；`claude-code` Skill 才是真正的"放养模式"。**
 
 ---
 
@@ -301,7 +364,7 @@ openclaw gateway restart
 ## 3.8 任务编排模式图解
 
 ```mermaid
-flowchart TD
+graph TD
     subgraph Chain["模式一：顺序执行（Chain）"]
         P1["Parent"] -->|spawn| A1["Task A"]
         A1 -->|yield| R1["Result A"]
@@ -335,16 +398,16 @@ flowchart TD
 
 | 维度 | Hermes Profile + claude-code | OpenClaw sessions_spawn + ACP |
 |------|------------------------------|-------------------------------|
-| **真实存在** | ✅ Profile 机制 + tool_call | ✅ 原生 ACP session spawn |
-| **多角色隔离** | ✅ Profile 切换 | ✅ 独立 session key |
-| **Parent-Child 隔离** | ⚠️ claude-code tool_call 无隔离；delegate_task 有隔离（parent_session_id 追踪） | ✅ 独立 session key |
+| **真实存在** | ✅ Profile 机制 + claude-code Skill | ✅ 原生 ACP session spawn |
+| **多角色隔离** | ✅ Profile 独立进程 | ✅ 独立 session key |
+| **Parent-Child 隔离** | ⚠️ claude-code Skill 无隔离；delegate_task 有隔离（parent_session_id 追踪） | ✅ 独立 session key |
 | **流式转发** | ❌ 无 | ✅ stream relay |
-| **Session 管理** | ❌ 无 | ✅ AcpSessionManager |
-| **生命周期管理** | ❌ 无 | ⚠️ 有但不完善（超时不自杀） |
-| **外部 CLI 桥接** | ✅ claude-code/codex 内置 tool | ❌ 格式不兼容（acpx） |
-| **使用门槛** | 低（工具调用） | 高（需要理解 ACP 协议） |
+| **Session 管理** | ⚠️ delegate_task 有 | ✅ AcpSessionManager |
+| **生命周期管理** | ⚠️ delegate_task 有但不完善 | ⚠️ 有但不完善（超时不自杀） |
+| **外部 CLI 桥接** | ✅ claude-code/codex Skill | ❌ 格式不兼容（acpx） |
+| **使用门槛** | 低（Skill 调用） | 高（需要理解 ACP 协议） |
 
-**核心结论：OpenClaw 的 ACP SubAgent 机制在架构上远比 Hermes 完整（独立 session、流式转发、生命周期管理），但执行层有几个坑（超时不自杀、Stream relay 数据丢失、并发 Spawn 问题）。生产环境用 SubAgent 时，必须有超时机制和结果验证，不能裸依赖 ACP 的默认行为。Hermes 的 profile 机制本身是一种有效的多角色方式，但通过 claude-code tool 的委托缺乏真正的 session 隔离。**
+**核心结论：OpenClaw 的 ACP SubAgent 机制在架构上远比 Hermes 完整（独立 session、流式转发、生命周期管理），但执行层有几个坑（超时不自杀、Stream relay 数据丢失、并发 Spawn 问题）。生产环境用 SubAgent 时，必须有超时机制和结果验证，不能裸依赖 ACP 的默认行为。Hermes 的 `delegate_task` 提供了真正的 session 隔离，是比 `claude-code` Skill 更可靠的委托方式，但缺乏流式转发。Profile 适合做工作区隔离，不是多 Agent 协作。**
 
 ---
 
